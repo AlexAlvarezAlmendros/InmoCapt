@@ -1,8 +1,10 @@
 import re
-from typing import Dict, List
+import time
+from typing import Dict, List, Optional
 from bs4 import BeautifulSoup
 from .base_scraper import BaseScraper
 from utils.locations import location_manager, LocationType
+from utils.selenium_stealth import selenium_stealth
 
 
 class FotocasaScraper(BaseScraper):
@@ -13,27 +15,19 @@ class FotocasaScraper(BaseScraper):
         self.base_url = "https://www.fotocasa.es"
     
     def _check_particular_indicators(self, soup: BeautifulSoup) -> bool:
-        """Verificar si el anuncio es de un particular en Fotocasa"""
-        # Buscar indicadores específicos de Fotocasa para particulares
-        particular_indicators = [
-            'span.re-FormContactDetailAside-particularLabel:-soup-contains("particular")',
-            '.particular-label',
-            '.contact-type:-soup-contains("particular")',
-            '[data-testid="contact-type"]:-soup-contains("particular")'
-        ]
+        """
+        Para Fotocasa, extraemos todos los anuncios (particulares + profesionales).
+        Los portales inmobiliarios modernos tienen propiedades de calidad en ambas categorías.
         
-        for indicator in particular_indicators:
-            if soup.select(indicator):
-                return True
-        
-        # Buscar en el texto del contacto
-        contact_sections = soup.select('.contact-info, .contact-section, .advertiser-info')
-        for section in contact_sections:
-            text = section.get_text().lower()
-            if 'particular' in text and ('inmobiliaria' not in text and 'agencia' not in text):
-                return True
-        
-        return False
+        Args:
+            soup (BeautifulSoup): Objeto BeautifulSoup del contenido HTML
+            
+        Returns:
+            bool: True (siempre extrae datos independientemente del tipo de publicador)
+        """
+        # Implementación simplificada: extraer todos los anuncios
+        # La diferenciación particular/profesional puede hacerse en post-procesamiento si es necesaria
+        return True
     
     def _extract_listing_data(self, soup: BeautifulSoup) -> Dict:
         """Extraer datos específicos de Fotocasa"""
@@ -238,17 +232,64 @@ class FotocasaScraper(BaseScraper):
             
         return url
     
+    def _make_request(self, url: str, retries: int = 3) -> Optional[BeautifulSoup]:
+        """Realizar petición usando Selenium para Fotocasa por contenido dinámico"""
+        self.logger.info(f"Realizando petición con Selenium a: {url}")
+        
+        try:
+            # Configurar driver si es necesario
+            if not selenium_stealth.driver:
+                if not selenium_stealth.setup_driver(headless=False):
+                    self.logger.error("ERROR: No se pudo configurar Selenium WebDriver")
+                    return super()._make_request(url, retries)  # Fallback a HTTP
+            
+            driver = selenium_stealth.driver
+            if not driver:
+                self.logger.error("ERROR: Driver no disponible")
+                return super()._make_request(url, retries)  # Fallback a HTTP
+            
+            # Navegar a la URL
+            self.logger.info(f"🌐 Navegando con Selenium a: {url}")
+            driver.get(url)
+            
+            # Esperar a que el contenido se cargue
+            self.logger.info("⏳ Esperando carga de contenido dinámico...")
+            time.sleep(8)
+            
+            # Verificar que haya contenido
+            from selenium.webdriver.common.by import By
+            try:
+                # Esperar a que aparezcan enlaces de vivienda
+                elements = driver.find_elements(By.CSS_SELECTOR, "a[href*='/vivienda/']")
+                self.logger.info(f"✅ Contenido cargado: {len(elements)} enlaces de vivienda detectados")
+            except:
+                self.logger.warning("⚠️ No se detectaron enlaces de vivienda")
+            
+            # Obtener HTML y crear BeautifulSoup
+            html_content = driver.page_source
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            self.logger.debug(f"✅ Petición Selenium exitosa")
+            return soup
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error con Selenium: {e}")
+            self.logger.info("🔄 Intentando fallback con HTTP tradicional...")
+            return super()._make_request(url, retries)  # Fallback a HTTP tradicional
     def _extract_listing_links(self, soup: BeautifulSoup) -> List[str]:
         """Extraer enlaces de listados de la página de resultados"""
         links = []
         
         # Selectores para enlaces de anuncios en Fotocasa
         link_selectors = [
+            'a[href*="/vivienda/"]',
             '.re-SearchResult a[href*="/vivienda/"]',
             '.re-SearchResult-item a',
-            'article a[href*="/vivienda/"]',
-            '.listing-item a'
+            'article a[href*="/vivienda/"]'
         ]
+        
+        # Usar un set para evitar duplicados
+        unique_links = set()
         
         for selector in link_selectors:
             for link in soup.select(selector):
@@ -256,7 +297,43 @@ class FotocasaScraper(BaseScraper):
                 if href and isinstance(href, str):
                     if href.startswith('/'):
                         href = self.base_url + href
-                    if href not in links and '/vivienda/' in href:
-                        links.append(href)
+                    
+                    # Limpiar parámetros de galería
+                    clean_href = self._clean_gallery_params(href)
+                    
+                    # Solo añadir si es una URL válida después de limpiar
+                    if (clean_href and '/vivienda/' in clean_href and 
+                        clean_href not in unique_links):
+                        unique_links.add(clean_href)
+        
+        # Convertir set a lista
+        links = list(unique_links)
+        
+        self.logger.info(f"🔗 Enlaces únicos extraídos: {len(links)}")
+        
+        # Mostrar algunos ejemplos para debug
+        for i, link in enumerate(links[:3]):
+            self.logger.debug(f"Enlace {i+1}: {link}")
         
         return links
+    
+    def _clean_gallery_params(self, url: str) -> str:
+        """Limpiar parámetros de galería de la URL"""
+        # Patrón para eliminar parámetros de galería
+        patterns_to_remove = [
+            r'[&?]multimedia=image',
+            r'[&?]multimedia=video',
+            r'[&?]multimedia=map',
+            r'[&?]isGalleryOpen=true',
+            r'[&?]isZoomGalleryOpen=true'
+        ]
+        
+        clean_url = url
+        for pattern in patterns_to_remove:
+            clean_url = re.sub(pattern, '', clean_url)
+        
+        # Limpiar & duplicados o que queden al final
+        clean_url = re.sub(r'[&?]&', '&', clean_url)
+        clean_url = re.sub(r'[&?]$', '', clean_url)
+        
+        return clean_url

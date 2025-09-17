@@ -26,8 +26,8 @@ class SeleniumStealth:
         self.driver = None
         self.logger = logging.getLogger(self.__class__.__name__)
         
-    def setup_driver(self, headless: bool = False):  # Cambiar default a False para evitar DataDome
-        """Configurar WebDriver con máxima evasión anti-DataDome"""
+    def setup_driver(self, headless: bool = False, use_proxy: bool = False, proxy_url: str = None):  
+        """Configurar WebDriver con máxima evasión anti-DataDome y rotación"""
         try:
             from selenium import webdriver
             from selenium.webdriver.chrome.options import Options
@@ -37,12 +37,30 @@ class SeleniumStealth:
             
             chrome_options = Options()
             
+            # Rotar User Agents realistas
+            user_agents = [
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/119.0.0.0"
+            ]
+            
+            import random
+            selected_ua = random.choice(user_agents)
+            self.logger.info(f"🎭 User Agent seleccionado: {selected_ua[:50]}...")
+            
             # Para DataDome, es mejor NO usar headless
             if headless:
                 chrome_options.add_argument("--headless=new")
                 self.logger.warning("AVISO: Modo headless activado - DataDome puede detectar esto mas facilmente")
             else:
                 self.logger.info("Modo visible activado - mejor para evadir DataDome")
+            
+            # Configuración proxy si se proporciona
+            if use_proxy and proxy_url:
+                chrome_options.add_argument(f"--proxy-server={proxy_url}")
+                self.logger.info(f"🔄 Usando proxy: {proxy_url}")
             
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
@@ -54,10 +72,24 @@ class SeleniumStealth:
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
             
-            # Headers más realistas
-            chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            # Headers más realistas específicos para España/Fotocasa
+            chrome_options.add_argument(f"--user-agent={selected_ua}")
             chrome_options.add_argument("--accept-lang=es-ES,es;q=0.9,en;q=0.8")
             chrome_options.add_argument("--accept-encoding=gzip, deflate, br")
+            
+            # CONFIGURACIÓN ESPECÍFICA ANTI-FOTOCASA
+            chrome_options.add_argument("--disable-web-security")
+            chrome_options.add_argument("--disable-features=VizDisplayCompositor,TranslateUI,BlinkGenPropertyTrees")
+            chrome_options.add_argument("--disable-background-networking")
+            chrome_options.add_argument("--disable-sync")
+            chrome_options.add_argument("--disable-translate")
+            chrome_options.add_argument("--disable-ipc-flooding-protection")
+            chrome_options.add_argument("--disable-hang-monitor")
+            chrome_options.add_argument("--disable-client-side-phishing-detection")
+            chrome_options.add_argument("--disable-component-update")
+            chrome_options.add_argument("--disable-background-timer-throttling")
+            chrome_options.add_argument("--disable-renderer-backgrounding")
+            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
             
             # Deshabilitar características detectables por DataDome
             chrome_options.add_argument("--disable-plugins-discovery")
@@ -187,15 +219,64 @@ class SeleniumStealth:
         try:
             self.logger.info(f"Navegacion humana a: {url}")
             
-            # Paso 1: Ir a página principal primero
+            # Paso 1: Ir a página principal primero (especial para Fotocasa)
             base_url = '/'.join(url.split('/')[:3])
-            self.logger.info(f"Paso 1: Visitando página principal: {base_url}")
             
-            self.driver.get(base_url)
-            self._random_wait(2, 4)
-            
-            # Simular scroll y movimiento
-            self._simulate_human_behavior()
+            # Para Fotocasa, usar navegación más elaborada
+            if 'fotocasa.es' in url:
+                self.logger.info(f"🏠 FOTOCASA: Navegación anti-bloqueo iniciada")
+                
+                # Paso 1.1: Página principal con delay más largo
+                self.logger.info(f"Paso 1: Visitando página principal Fotocasa")
+                self.driver.get(base_url)
+                self._random_wait(5, 8)  # Más tiempo en página principal
+                
+                # Paso 1.2: Aceptar cookies si aparecen
+                try:
+                    from selenium.webdriver.common.by import By
+                    from selenium.webdriver.support.ui import WebDriverWait
+                    from selenium.webdriver.support import expected_conditions as EC
+                    
+                    # Buscar botón de cookies
+                    cookie_selectors = [
+                        'button[data-testid="TcfAcceptButton"]',
+                        'button[id*="accept"]',
+                        'button[class*="accept"]',
+                        '.sui-AtomButton--primary',
+                        'button:contains("Aceptar")'
+                    ]
+                    
+                    for selector in cookie_selectors:
+                        try:
+                            cookie_button = WebDriverWait(self.driver, 3).until(
+                                EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                            )
+                            cookie_button.click()
+                            self.logger.info("🍪 Cookies aceptadas")
+                            self._random_wait(2, 4)
+                            break
+                        except:
+                            continue
+                            
+                except Exception:
+                    pass  # No hay cookies o error
+                
+                # Paso 1.3: Comportamiento humano intenso
+                self._simulate_fotocasa_human_behavior()
+                
+                # Paso 1.4: Visitar una página de búsqueda intermedia
+                search_url = f"{base_url}/es/comprar/viviendas/"
+                self.logger.info(f"Paso 1.5: Visitando búsqueda intermedia")
+                self.driver.get(search_url)
+                self._random_wait(4, 7)
+                self._simulate_fotocasa_human_behavior()
+                
+            else:
+                # Navegación estándar para otros sitios
+                self.logger.info(f"Paso 1: Visitando página principal: {base_url}")
+                self.driver.get(base_url)
+                self._random_wait(2, 4)
+                self._simulate_human_behavior()
             
             # Paso 2: Navegar a la URL objetivo
             self.logger.info(f"Paso 2: Navegando a URL objetivo")
@@ -309,6 +390,47 @@ class SeleniumStealth:
             
         except Exception as e:
             self.logger.debug(f"Error simulando comportamiento: {e}")
+    
+    def _simulate_fotocasa_human_behavior(self):
+        """Simular comportamiento humano específico para Fotocasa"""
+        try:
+            from selenium.webdriver.common.action_chains import ActionChains
+            
+            self.logger.info("🏠 Simulando comportamiento humano en Fotocasa...")
+            
+            # Scroll más lento y natural
+            scroll_positions = [200, 500, 800, 1000, 600, 300]
+            for pos in scroll_positions:
+                self.driver.execute_script(f"window.scrollTo({{ top: {pos}, behavior: 'smooth' }});")
+                self._random_wait(1, 3)  # Delays más largos
+            
+            # Volver arriba lentamente
+            self.driver.execute_script("window.scrollTo({ top: 0, behavior: 'smooth' });")
+            self._random_wait(2, 4)
+            
+            # Simular hover sobre elementos típicos de Fotocasa
+            try:
+                elements_to_hover = [
+                    'nav', '.sui-AtomButton', '.re-SearchResult',
+                    'header', 'footer', '.sui-CardBasic'
+                ]
+                
+                for selector in elements_to_hover[:2]:  # Solo algunos
+                    try:
+                        element = self.driver.find_element("css selector", selector)
+                        ActionChains(self.driver).move_to_element(element).perform()
+                        self._random_wait(0.5, 1.5)
+                        break  # Solo uno exitoso
+                    except:
+                        continue
+            except:
+                pass
+            
+            # Simular pause humana
+            self._random_wait(3, 6)
+            
+        except Exception as e:
+            self.logger.debug(f"Error simulando comportamiento Fotocasa: {e}")
     
     def _random_wait(self, min_time: float, max_time: float):
         """Espera aleatoria"""
