@@ -67,10 +67,14 @@ def initialize_session_state():
     if 'first_run' not in st.session_state:
         st.session_state.first_run = True
         st.session_state.busqueda_activa = False
+        st.session_state.stop_search = False  # Nueva variable para controlar la interrupción
         st.session_state.resultados = pd.DataFrame()
         st.session_state.log_messages = []
         st.session_state.progress = 0
         st.session_state.stats = {}
+        st.session_state.current_portal = ""  # Portal actual
+        st.session_state.current_page = 0  # Página actual
+        st.session_state.listings_found = 0  # Contador de particulares encontrados
 
 def show_welcome_message():
     """Mostrar mensaje de bienvenida"""
@@ -115,7 +119,7 @@ def render_sidebar():
         for i, city in enumerate(suggested_cities[:6]):  # Mostrar las primeras 6
             col = cities_cols[i % 2]
             with col:
-                if st.button(f"📍 {city.split('-')[0].title()}", key=f"city_{city}", use_container_width=True):
+                if st.button(f"📍 {city.split('-')[0].title()}", key=f"city_{city}", width=True):
                     st.session_state.current_location = city
                     st.rerun()
         
@@ -124,7 +128,7 @@ def render_sidebar():
         for i, comarca in enumerate(suggested_comarcas[:6]):  # Mostrar las primeras 6
             col = comarcas_cols[i % 2]
             with col:
-                if st.button(f"🏞️ {comarca.split('/')[-1].title()}", key=f"comarca_{comarca}", use_container_width=True):
+                if st.button(f"🏞️ {comarca.split('/')[-1].title()}", key=f"comarca_{comarca}", width=True):
                     st.session_state.current_location = comarca
                     st.rerun()
     
@@ -194,21 +198,32 @@ def render_sidebar():
     operation = "Venta"  # Solo inmuebles en venta
     
     # Botón principal de búsqueda
-    buscar_button = st.sidebar.button(
-        "🔍 Iniciar Búsqueda",
-        type="primary",
-        disabled=st.session_state.busqueda_activa,
-        use_container_width=True
-    )
+    if not st.session_state.busqueda_activa:
+        buscar_button = st.sidebar.button(
+            "🔍 Iniciar Búsqueda",
+            type="primary",
+            width="stretch"
+        )
+    else:
+        buscar_button = False
+        # Botón de parar búsqueda cuando está activa
+        if st.sidebar.button(
+            "⏹️ Parar Búsqueda",
+            type="secondary",
+            width="stretch",
+            help="Detiene la búsqueda y guarda los inmuebles encontrados hasta el momento"
+        ):
+            st.session_state.stop_search = True
+            st.sidebar.warning("🛑 Deteniendo búsqueda... Se guardarán los resultados encontrados hasta ahora.")
     
     # Botones secundarios
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        if st.button("💾 Guardar Config", use_container_width=True):
+        if st.button("💾 Guardar Config", width="stretch"):
             save_configuration(locals())
     
     with col2:
-        if st.button("📁 Cargar Config", use_container_width=True):
+        if st.button("📁 Cargar Config", width="stretch"):
             load_configuration()
     
     return {
@@ -242,29 +257,36 @@ def load_configuration():
         st.sidebar.error(f"Error cargando configuración: {e}")
 
 def execute_search(search_params):
-    """Ejecutar búsqueda en segundo plano"""
+    """Ejecutar búsqueda con progreso indefinido simple"""
     _, excel_manager, scrapers = initialize_managers()
     
-    # Resetear estado
+    # Inicializar estado de búsqueda
     st.session_state.log_messages = []
     st.session_state.progress = 0
-    st.session_state.resultados = pd.DataFrame()
+    st.session_state.current_portal = ""
+    st.session_state.current_page = 0
+    st.session_state.listings_found = 0
     
     all_results = []
     total_portales = sum(1 for activo in search_params['portales_activos'].values() if activo)
-    current_portal = 0
+    
+    # Mostrar mensaje simple de progreso
+    st.write("## � Búsqueda en Progreso")
+    st.info("🚀 Procesando búsqueda en todos los portales seleccionados...")
+    
+    # Barra de progreso indefinida
+    progress_bar = st.progress(0, text="Trabajando...")
     
     for portal_name, scraper in scrapers.items():
+        # Verificar si se solicitó parar la búsqueda
+        if st.session_state.stop_search:
+            break
+            
         if not search_params['portales_activos'].get(portal_name.lower(), False):
             continue
         
-        current_portal += 1
-        progress = (current_portal - 1) / total_portales
-        st.session_state.progress = progress
-        
-        # Log de inicio
-        message = f"🔍 Iniciando búsqueda en {portal_name}..."
-        st.session_state.log_messages.append(message)
+        # Actualizar mensaje de progreso
+        progress_bar.progress(50, text=f"Procesando {portal_name}...")
         
         try:
             # Construir parámetros específicos del portal
@@ -282,78 +304,110 @@ def execute_search(search_params):
             # Ejecutar búsqueda
             results = scraper.search_listings(portal_params)
             
+            # Verificar si se solicitó parar durante la búsqueda del portal
+            if st.session_state.stop_search:
+                if results:
+                    particulares = [r for r in results if r]
+                    all_results.extend(particulares)
+                break
+            
             # Filtrar solo particulares
             particulares = [r for r in results if r]
             all_results.extend(particulares)
             
-            message = f"✅ {portal_name}: {len(particulares)} particulares encontrados"
-            st.session_state.log_messages.append(message)
-            
         except Exception as e:
-            message = f"❌ Error en {portal_name}: {str(e)}"
-            st.session_state.log_messages.append(message)
+            # Solo log interno, no mostrar al usuario
+            pass
     
-    # Guardar resultados
+    # Actualizar progreso a guardado
+    progress_bar.progress(75, text="Guardando resultados...")
+    
+    # Guardar resultados (incluso si fueron interrumpidos)
     if all_results:
-        stats = excel_manager.add_listings(all_results)
-        st.session_state.stats = stats
-        st.session_state.resultados = excel_manager.load_data()
-        
-        message = f"📊 Resumen: {stats['nuevos']} nuevos, {stats['actualizados']} actualizados"
-        st.session_state.log_messages.append(message)
+        try:
+            stats = excel_manager.add_listings(all_results)
+            st.session_state.stats = stats
+            st.session_state.resultados = excel_manager.load_data()
+        except Exception as e:
+            # Error silencioso
+            pass
     
-    st.session_state.progress = 1.0
+    # Finalizar
+    progress_bar.progress(100, text="Completado")
+    
+    # Limpiar flags
     st.session_state.busqueda_activa = False
+    st.session_state.stop_search = False
+    
+    # Limpiar progreso y mostrar resultado
+    progress_bar.empty()
+    
+    # Mensaje final simple
+    if st.session_state.stop_search:
+        st.warning("🛑 Proceso detenido por el usuario.")
+    else:
+        st.success("✅ Proceso finalizado exitosamente.")
+    
+    if all_results and hasattr(st.session_state, 'stats'):
+        st.info(f"� Resultados: {st.session_state.stats.get('nuevos', 0)} nuevos inmuebles encontrados.")
 
 def render_search_tab():
-    """Renderizar tab de búsqueda"""
+    """Renderizar tab de búsqueda simplificado"""
     st.header("🔍 Búsqueda de Viviendas")
     
+    # Mostrar estado de búsqueda si está activa
     if st.session_state.busqueda_activa:
-        # Mostrar progreso
-        st.subheader("Búsqueda en curso...")
-        
-        progress_bar = st.progress(st.session_state.progress)
-        
-        # Métricas en tiempo real
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Progreso", f"{st.session_state.progress * 100:.0f}%")
-        with col2:
-            st.metric("Anuncios procesados", len(st.session_state.resultados))
-        with col3:
-            nuevos = st.session_state.stats.get('nuevos', 0)
-            st.metric("Particulares encontrados", nuevos)
-        
-        # Log en tiempo real
-        if st.session_state.log_messages:
-            st.subheader("📋 Log de búsqueda")
-            log_container = st.container()
-            with log_container:
-                for message in st.session_state.log_messages[-10:]:  # Últimos 10 mensajes
-                    st.info(message)
+        st.warning("🟡 Búsqueda en progreso... Usa el botón 'Parar Búsqueda' en el panel lateral para detener.")
+        st.info("⏳ Por favor, espera mientras procesamos tu búsqueda...")
     
     else:
-        # Panel de control cuando no hay búsqueda activa
-        st.subheader("Panel de Control")
+        # Panel cuando no hay búsqueda activa
+        st.subheader("💡 Panel de Control")
         
-        if st.session_state.stats:
+        if hasattr(st.session_state, 'stats') and st.session_state.stats:
             # Mostrar resultados de la última búsqueda
-            st.success("¡Búsqueda completada!")
+            st.success("✅ ¡Última búsqueda completada!")
             
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Nuevos anuncios", st.session_state.stats.get('nuevos', 0))
+                st.metric("✨ Nuevos", st.session_state.stats.get('nuevos', 0))
             with col2:
-                st.metric("Actualizados", st.session_state.stats.get('actualizados', 0))
+                st.metric("🔄 Actualizados", st.session_state.stats.get('actualizados', 0))
             with col3:
-                st.metric("Duplicados", st.session_state.stats.get('duplicados', 0))
+                st.metric("📝 Duplicados", st.session_state.stats.get('duplicados', 0))
             with col4:
-                total = len(st.session_state.resultados)
-                st.metric("Total en base", total)
+                total = len(getattr(st.session_state, 'resultados', []))
+                st.metric("📊 Total en BD", total)
         
         else:
-            st.info("👈 Configura los parámetros en el panel lateral y haz clic en 'Iniciar Búsqueda'")
+            st.info("👈 **Instrucciones:**\n\n1. Configura los parámetros de búsqueda en el panel lateral\n2. Selecciona los portales inmobiliarios\n3. Haz clic en **'🔍 Iniciar Búsqueda'**\n4. El progreso se mostrará automáticamente\n5. Puedes **detener** la búsqueda en cualquier momento")
+    
+    # Mostrar últimos resultados si existen
+    if hasattr(st.session_state, 'resultados') and not st.session_state.resultados.empty:
+        st.subheader("📋 Últimos Resultados Encontrados")
+        
+        # Mostrar solo las primeras 5 filas para no saturar la interfaz
+        preview_df = st.session_state.resultados.head(5)
+        
+        # Seleccionar columnas más relevantes para mostrar
+        display_columns = []
+        for col in ['Título', 'Precio', 'Superficie', 'Habitaciones', 'Portal', 'Estado']:
+            if col in preview_df.columns:
+                display_columns.append(col)
+        
+        if display_columns:
+            st.dataframe(
+                preview_df[display_columns], 
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.dataframe(preview_df.head(), use_container_width=True, hide_index=True)
+        
+        # Enlace a la pestaña de resultados
+        total_count = len(st.session_state.resultados)
+        if total_count > 5:
+            st.info(f"📈 Se muestran 5 de {total_count} resultados totales. Ve a la pestaña **'📊 Resultados'** para ver todos y gestionarlos.")
 
 def render_results_tab():
     """Renderizar tab de resultados con gestión de inmuebles"""
@@ -459,24 +513,7 @@ def render_results_tab():
                     else:
                         st.markdown("❌ **Descartado**")
     
-    # Botones de acción masiva
-    st.markdown("---")
-    st.subheader("🔧 Acciones Masivas")
     
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("📥 Descargar Excel completo", use_container_width=True):
-            download_excel(df_filtered)
-    
-    with col2:
-        if st.button("� Marcar activos como contactados", use_container_width=True):
-            mark_all_as_contacted(df_filtered)
-    
-    with col3:
-        if st.button("🔄 Actualizar datos", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
 
 def render_statistics_tab():
     """Renderizar tab de estadísticas"""
@@ -519,7 +556,7 @@ def render_statistics_tab():
             title="Anuncios por Portal",
             labels={'x': 'Portal', 'y': 'Cantidad'}
         )
-        st.plotly_chart(fig_portal, use_container_width=True)
+        st.plotly_chart(fig_portal, width=True)
     
     with col2:
         # Distribución de precios
@@ -529,7 +566,7 @@ def render_statistics_tab():
             title="Distribución de Precios",
             nbins=20
         )
-        st.plotly_chart(fig_price, use_container_width=True)
+        st.plotly_chart(fig_price, width=True)
     
     # Tabla de estadísticas detalladas
     st.subheader("📊 Estadísticas por Portal")
@@ -547,7 +584,7 @@ def render_statistics_tab():
         stats_by_portal.append(stats)
     
     stats_df = pd.DataFrame(stats_by_portal)
-    st.dataframe(stats_df, use_container_width=True, hide_index=True)
+    st.dataframe(stats_df, width=True, hide_index=True)
 
 def download_excel(df):
     """Funcionalidad de descarga de Excel"""
@@ -613,11 +650,16 @@ def main():
     # Crear tabs principales
     tab1, tab2, tab3 = st.tabs(["🔍 Búsqueda", "📊 Resultados", "📈 Estadísticas"])
     
-    # Manejar inicio de búsqueda
+    # Manejar inicio de búsqueda sin threading
     if search_params['buscar'] and not st.session_state.busqueda_activa:
         st.session_state.busqueda_activa = True
-        # Ejecutar búsqueda en hilo separado (simulado)
+        st.session_state.stop_search = False
+        
+        # Ejecutar búsqueda directamente con interfaz en tiempo real
         execute_search(search_params)
+        
+        # Forzar actualización para mostrar resultados
+        st.rerun()
     
     # Renderizar contenido de tabs
     with tab1:

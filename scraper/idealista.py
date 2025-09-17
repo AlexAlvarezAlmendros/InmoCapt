@@ -217,7 +217,10 @@ class IdealistaScraper(SeleniumBaseScraper):
             # Teléfono
             telefono_extraido = self._extract_phone(soup)
             data['telefono'] = telefono_extraido
-            self.logger.info(f"📞 DEBUG: Teléfono extraído = '{telefono_extraido}'")
+            self.logger.info(f"📞 DEBUG: Teléfono extraído = '{telefono_extraido}' (tipo: {type(telefono_extraido)})")
+            
+            # Debug adicional para verificar el contenido del diccionario de datos
+            self.logger.info(f"📊 DEBUG: data['telefono'] final = '{data.get('telefono', 'NO_SET')}'")
             
             # Nombre contacto
             data['nombre_contacto'] = self._extract_text(soup, '.professional-name', '')
@@ -291,9 +294,12 @@ class IdealistaScraper(SeleniumBaseScraper):
                 if phone_element:
                     phone_text = phone_element.get_text().strip()
                     self.logger.info(f"🔍 DEBUG: Elemento encontrado con selector '{selector}': '{phone_text}'")
-                    if phone_text and re.search(r'\d{9}', phone_text) and 'Ver teléfono' not in phone_text:
-                        self.logger.info(f"📞 Teléfono encontrado directamente: {phone_text}")
-                        return phone_text
+                    if phone_text and 'Ver teléfono' not in phone_text:
+                        # Verificar si tiene suficientes dígitos
+                        phone_digits = re.sub(r'\D', '', phone_text)
+                        if len(phone_digits) >= 9:
+                            self.logger.info(f"📞 Teléfono encontrado directamente: {phone_text}")
+                            return phone_text
             
             # Si no hay teléfono visible, verificar si hay botón "Ver teléfono"
             button_selector = 'a.see-phones-btn.icon-phone-outline.hidden-contact-phones_link'
@@ -325,12 +331,18 @@ class IdealistaScraper(SeleniumBaseScraper):
                         wait_time=(2, 4)
                     )
                     
-                    self.logger.info(f"🔍 DEBUG: Resultado de Selenium: '{phone_text}'")
-                    if phone_text and re.search(r'\d{9}', phone_text):
-                        self.logger.info(f"📞 Teléfono obtenido tras clic: {phone_text}")
-                        return phone_text
+                    self.logger.info(f"🔍 DEBUG: Resultado de Selenium: '{phone_text}' (tipo: {type(phone_text)})")
+                    if phone_text:
+                        # Limpiar espacios y verificar si tiene al menos 9 dígitos
+                        phone_digits = re.sub(r'\D', '', phone_text)  # Quitar todo lo que no sea dígito
+                        if len(phone_digits) >= 9:
+                            self.logger.info(f"📞 Teléfono obtenido tras clic: {phone_text}")
+                            self.logger.info(f"🔍 DEBUG: Retornando teléfono: '{phone_text}'")
+                            return phone_text
+                        else:
+                            self.logger.warning(f"⚠️ Teléfono muy corto ({len(phone_digits)} dígitos): '{phone_text}'")
                     else:
-                        self.logger.warning("⚠️ No se pudo obtener teléfono tras hacer clic")
+                        self.logger.warning(f"⚠️ No se pudo obtener teléfono tras hacer clic. Contenido: '{phone_text}'")
                         
                 except ImportError:
                     self.logger.warning("⚠️ Selenium no disponible para hacer clic en botón de teléfono")

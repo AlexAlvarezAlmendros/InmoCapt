@@ -227,3 +227,6 @@ test_urls.py
 test_workflow.py
 Documentacion/documentacionFuncional.md
 scraper/__init__.py
+test_phone_debug.py
+debug_telefonos.py
+app_backup.py

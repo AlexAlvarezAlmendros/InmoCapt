@@ -7,6 +7,13 @@ from bs4 import BeautifulSoup
 from typing import Dict, List, Optional
 from utils.antibot import antibot_manager
 
+try:
+    import streamlit as st
+    STREAMLIT_AVAILABLE = True
+except ImportError:
+    st = None
+    STREAMLIT_AVAILABLE = False
+
 
 class BaseScraper(ABC):
     """Clase base abstracta para todos los scrapers de portales inmobiliarios"""
@@ -27,6 +34,19 @@ class BaseScraper(ABC):
             'Upgrade-Insecure-Requests': '1',
         }
         self.session.headers.update(self.headers)
+    
+    def _update_current_page(self, page: int):
+        """Actualizar la página actual en el session state"""
+        if STREAMLIT_AVAILABLE and st and hasattr(st.session_state, 'current_page'):
+            st.session_state.current_page = page
+            # También añadir log de progreso de página
+            if hasattr(st.session_state, 'log_messages'):
+                st.session_state.log_messages.append(f"📄 {self.name} - Procesando página {page}")
+    
+    def _add_log_message(self, message: str):
+        """Añadir mensaje al log si Streamlit está disponible"""
+        if STREAMLIT_AVAILABLE and st and hasattr(st.session_state, 'log_messages'):
+            st.session_state.log_messages.append(message)
     
     def _make_request(self, url: str, retries: int = 3) -> Optional[BeautifulSoup]:
         """Realizar petición HTTP con técnicas anti-bot avanzadas"""
@@ -151,8 +171,107 @@ class BaseScraper(ABC):
         """Método abstracto para construir URL de búsqueda específica"""
         pass
     
+    def search_listings_realtime(self, search_params: Dict) -> List[Dict]:
+        """Buscar listados con actualizaciones en tiempo real para la interfaz web"""
+        try:
+            # Intentar importar streamlit para actualizaciones en tiempo real
+            import streamlit as st
+            realtime_updates = True
+        except (ImportError, RuntimeError):
+            # Si no está disponible, usar método normal
+            return self.search_listings(search_params)
+        
+        results = []
+        page = 1
+        max_pages = search_params.get('max_pages', 10)
+        total_processed = 0
+        total_particulares = 0
+        
+        self.logger.info(f"Iniciando búsqueda en tiempo real en {self.name} - Máximo {max_pages} páginas")
+        
+        while page <= max_pages:
+            # Verificar si se solicitó parar la búsqueda
+            if self._should_stop_search():
+                self.logger.info(f"🛑 Búsqueda interrumpida por el usuario en {self.name} (página {page})")
+                break
+            
+            # Actualizar página actual en tiempo real
+            if realtime_updates:
+                st.session_state.current_page = page
+                st.session_state.log_messages.append(f"📄 Procesando página {page} de {self.name}")
+                
+            self.logger.info(f"Procesando página {page} de {self.name}")
+            
+            # Construir URL de la página actual
+            url = self.build_search_url({**search_params, 'page': page})
+            soup = self._make_request(url)
+            
+            if not soup:
+                self.logger.error(f"No se pudo obtener la página {page}")
+                if realtime_updates:
+                    st.session_state.log_messages.append(f"❌ Error cargando página {page}")
+                break
+            
+            # Extraer enlaces de listados de esta página
+            listings = self._extract_listing_links(soup)
+            
+            if not listings:
+                self.logger.info(f"No se encontraron más listados en página {page}")
+                if realtime_updates:
+                    st.session_state.log_messages.append(f"🏁 Fin de resultados en página {page}")
+                break
+            
+            self.logger.info(f"Encontrados {len(listings)} listados en página {page}")
+            if realtime_updates:
+                st.session_state.log_messages.append(f"🔍 Encontrados {len(listings)} anuncios en página {page}")
+            
+            # Procesar cada listado individual
+            page_particulares = 0
+            for i, listing_url in enumerate(listings, 1):
+                # Verificar interrupción antes de procesar cada listado
+                if self._should_stop_search():
+                    self.logger.info(f"🛑 Búsqueda interrumpida durante procesamiento de listado {i} en página {page}")
+                    return results  # Retornar resultados obtenidos hasta ahora
+                
+                progress_msg = f"Procesando listado {i}/{len(listings)} de página {page}"
+                self.logger.debug(f"{progress_msg}: {listing_url}")
+                
+                listing_data = self.scrape_listing(listing_url)
+                if listing_data:
+                    results.append(listing_data)
+                    page_particulares += 1
+                    total_particulares += 1
+                    
+                    # Actualización en tiempo real
+                    if realtime_updates:
+                        st.session_state.listings_found = total_particulares
+                        st.session_state.log_messages.append(f"✅ Particular #{total_particulares}: {listing_data.get('titulo', 'Sin título')[:50]}...")
+                    
+                    self.logger.info(f"✅ Particular encontrado ({total_particulares} total): {listing_data.get('titulo', 'Sin título')}")
+                else:
+                    self.logger.debug(f"❌ Descartado (no particular): {listing_url}")
+                
+                total_processed += 1
+            
+            self.logger.info(f"Página {page} completada: {page_particulares} particulares de {len(listings)} listados")
+            if realtime_updates:
+                st.session_state.log_messages.append(f"📊 Página {page}: {page_particulares} particulares de {len(listings)} anuncios")
+            
+            page += 1
+        
+        if not self._should_stop_search():
+            self.logger.info(f"Búsqueda completada en {self.name}: {total_particulares} particulares de {total_processed} listados procesados")
+            if realtime_updates:
+                st.session_state.log_messages.append(f"🎯 {self.name} completado: {total_particulares} particulares encontrados")
+        else:
+            self.logger.info(f"Búsqueda interrumpida en {self.name}: {total_particulares} particulares de {total_processed} listados procesados hasta la interrupción")
+            if realtime_updates:
+                st.session_state.log_messages.append(f"🛑 {self.name} interrumpido: {total_particulares} particulares guardados")
+        
+        return results
+    
     def search_listings(self, search_params: Dict) -> List[Dict]:
-        """Buscar listados basándose en parámetros de búsqueda"""
+        """Buscar listados basándose en parámetros de búsqueda con capacidad de interrupción"""
         results = []
         page = 1
         max_pages = search_params.get('max_pages', 10)
@@ -162,6 +281,14 @@ class BaseScraper(ABC):
         self.logger.info(f"Iniciando búsqueda en {self.name} - Máximo {max_pages} páginas")
         
         while page <= max_pages:
+            # Verificar si se solicitó parar la búsqueda (desde Streamlit session_state)
+            if self._should_stop_search():
+                self.logger.info(f"🛑 Búsqueda interrumpida por el usuario en {self.name} (página {page})")
+                break
+            
+            # Actualizar página actual en session state
+            self._update_current_page(page)
+                
             self.logger.info(f"Procesando página {page} de {self.name}")
             
             # Construir URL de la página actual
@@ -184,8 +311,17 @@ class BaseScraper(ABC):
             # Procesar cada listado individual
             page_particulares = 0
             for i, listing_url in enumerate(listings, 1):
+                # Verificar interrupción antes de procesar cada listado
+                if self._should_stop_search():
+                    self.logger.info(f"🛑 Búsqueda interrumpida durante procesamiento de listado {i} en página {page}")
+                    return results  # Retornar resultados obtenidos hasta ahora
+                
                 progress_msg = f"Procesando listado {i}/{len(listings)} de página {page}"
                 self.logger.debug(f"{progress_msg}: {listing_url}")
+                
+                # Añadir log cada 5 listados procesados para no saturar
+                if i % 5 == 0:
+                    self._add_log_message(f"📋 {self.name} - Procesando {i}/{len(listings)} listados de página {page}")
                 
                 listing_data = self.scrape_listing(listing_url)
                 if listing_data:
@@ -193,6 +329,9 @@ class BaseScraper(ABC):
                     page_particulares += 1
                     total_particulares += 1
                     self.logger.info(f"✅ Particular encontrado ({total_particulares} total): {listing_data.get('titulo', 'Sin título')}")
+                    
+                    # Añadir log al session state cuando se encuentre un particular
+                    self._add_log_message(f"🏠 {self.name} - Particular #{total_particulares}: {listing_data.get('titulo', 'Sin título')[:50]}...")
                 else:
                     self.logger.debug(f"❌ Descartado (no particular): {listing_url}")
                 
@@ -201,8 +340,22 @@ class BaseScraper(ABC):
             self.logger.info(f"Página {page} completada: {page_particulares} particulares de {len(listings)} listados")
             page += 1
         
-        self.logger.info(f"Búsqueda completada en {self.name}: {total_particulares} particulares de {total_processed} listados procesados")
+        if not self._should_stop_search():
+            self.logger.info(f"Búsqueda completada en {self.name}: {total_particulares} particulares de {total_processed} listados procesados")
+        else:
+            self.logger.info(f"Búsqueda interrumpida en {self.name}: {total_particulares} particulares de {total_processed} listados procesados hasta la interrupción")
+        
         return results
+    
+    def _should_stop_search(self) -> bool:
+        """Verificar si se debe parar la búsqueda (desde Streamlit session_state)"""
+        try:
+            # Intentar importar streamlit y verificar session_state
+            import streamlit as st
+            return st.session_state.get('stop_search', False)
+        except (ImportError, RuntimeError, AttributeError):
+            # Si no está disponible streamlit o session_state, continuar normalmente
+            return False
     
     @abstractmethod
     def _extract_listing_links(self, soup: BeautifulSoup) -> List[str]:
