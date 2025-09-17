@@ -1,0 +1,75 @@
+{
+    "search_params": {
+        "operation": "sale",
+        "property_type": "homes",
+        "location": "madrid",
+        "min_price": 100000,
+        "max_price": 500000,
+        "min_rooms": 1,
+        "max_rooms": 4,
+        "min_surface": 50,
+        "max_pages": 5
+    },
+    "scraper_settings": {
+        "idealista": {
+            "enabled": true,
+            "delay": 2.0,
+            "max_retries": 3
+        },
+        "fotocasa": {
+            "enabled": true,
+            "delay": 1.5,
+            "max_retries": 3
+        },
+        "habitaclia": {
+            "enabled": true,
+            "delay": 1.0,
+            "max_retries": 3
+        }
+    },
+    "ui_settings": {
+        "theme": "light",
+        "auto_refresh": false,
+        "notifications": true,
+        "default_tab": "search"
+    },
+    "file_settings": {
+        "excel_path": "data/viviendas.xlsx",
+        "backup_enabled": true,
+        "backup_frequency": "daily"
+    },
+    "locations": {
+        "suggested_cities": [
+            "Madrid",
+            "Barcelona",
+            "Valencia",
+            "Sevilla",
+            "Bilbao",
+            "Zaragoza",
+            "Málaga",
+            "Murcia",
+            "Palma",
+            "Las Palmas"
+        ],
+        "suggested_zones": {
+            "Madrid": [
+                "Centro",
+                "Salamanca",
+                "Chamberí",
+                "Retiro",
+                "Chamartín",
+                "Tetuán",
+                "Moncloa",
+                "Fuencarral"
+            ],
+            "Barcelona": [
+                "Eixample",
+                "Gràcia",
+                "Sarrià-Sant Gervasi",
+                "Les Corts",
+                "Sant Martí",
+                "Ciutat Vella"
+            ]
+        }
+    }
+}

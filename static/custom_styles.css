@@ -1,0 +1,97 @@
+/* Estilos personalizados para InmoCapt */
+
+/* Contenedor de inmueble */
+.property-container {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 16px;
+    margin: 8px 0;
+    background-color: #f9f9f9;
+    transition: box-shadow 0.3s ease;
+}
+
+.property-container:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Botones de acción */
+.action-button {
+    display: inline-block;
+    padding: 8px 16px;
+    margin: 4px;
+    border-radius: 4px;
+    text-decoration: none;
+    font-weight: bold;
+    text-align: center;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.button-link {
+    background-color: #007bff;
+    color: white;
+}
+
+.button-link:hover {
+    background-color: #0056b3;
+}
+
+.button-contact {
+    background-color: #28a745;
+    color: white;
+}
+
+.button-contact:hover {
+    background-color: #1e7e34;
+}
+
+.button-discard {
+    background-color: #dc3545;
+    color: white;
+}
+
+.button-discard:hover {
+    background-color: #bd2130;
+}
+
+/* Estados de inmuebles */
+.status-active {
+    color: #28a745;
+    font-weight: bold;
+}
+
+.status-contacted {
+    color: #007bff;
+    font-weight: bold;
+}
+
+.status-discarded {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+/* Información de inmueble */
+.property-info {
+    line-height: 1.5;
+}
+
+.property-title {
+    font-size: 1.1em;
+    font-weight: bold;
+    color: #333;
+    margin-bottom: 8px;
+}
+
+.property-details {
+    color: #666;
+    font-size: 0.9em;
+}
+
+.property-portal {
+    background-color: #e9ecef;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    display: inline-block;
+    margin-right: 8px;
+}
