@@ -7,3 +7,5 @@ plotly>=5.17.0
 selenium>=4.15.0
 lxml>=4.9.0
 python-dateutil>=2.8.2
+cloudscraper>=1.2.60
+pyinstaller>=6.0.0
